@@ -1,99 +1,65 @@
 # w-critic
 
-`w-critic` is a WGAN-GP-inspired shared critic for pairwise comparison between generators. Instead of training a separate critic for each generator in isolation, this project trains one critic for a generator pair against a pooled fake distribution formed by mixing samples from exactly two generators. The resulting critic provides a common evaluation reference for deciding which generator in that pair is closer to the real image distribution.
+`w-critic` is a WGAN-GP-based shared critic for pairwise comparison between two image generators. For each generator pair, one critic is trained with real samples and a mixed fake set built from those two generators. The trained critic is then used to evaluate which generator is closer to the real data distribution under the same reference.
 
 ![Overview of the W-Critic workflow](assets/overviews.png)
 
-## Motivation
+## Background
 
-A separate critic for each generator can become specialized to that generator's own artifacts. That makes cross-model comparison harder: each critic may learn a different notion of what "fake" looks like, so the resulting distances are not directly aligned.
+When comparing two generators, the main question is which one produces samples that are closer to the real data distribution. A critic trained to separate real images from generated images can provide a useful evaluation signal for this purpose.
 
-`w-critic` addresses this by training one critic on:
+In `w-critic`, the two generators are evaluated with the same critic rather than with separate critics. The critic is trained on real samples and on a pooled fake set that contains samples from both generators. This gives a shared reference for the pairwise comparison.
 
-- real samples from the target data distribution
-- fake samples pooled from two generators under comparison
+After training, the same critic is applied separately to withheld samples from generator A and generator B. Because both generators are measured against the same real set and the same trained critic, their distance scores can be compared directly within the pair. The generator with the smaller real-fake distance is interpreted as being closer to the real data distribution under this evaluation setting.
 
-This shared-critic setup encourages the critic to focus on the discrepancy between the pairwise pooled fake distribution and the real distribution, rather than tailoring itself to either generator alone.
+## Overview
 
-## Core Idea
+The method uses one shared critic for one generator pair:
 
-During training, fake samples from the two generators being compared are mixed into one shared fake distribution:
+- real samples from the target dataset
+- fake samples from generator A
+- fake samples from generator B
+
+The fake samples are combined into a single pooled fake distribution:
 
 `fake_pool = fake_A ∪ fake_B`
 
-The critic is then trained to distinguish:
+The critic is trained to distinguish:
 
 - `real`
 - `fake_pool`
 
-At evaluation time, the same trained critic is applied separately to withheld samples from each generator in the pair. This gives a unified way to compare the two generators under a single learned notion of realism.
+## Pairwise Evaluation Protocol
 
-In short:
+For each pair of generators:
 
-1. Train one critic on `real` versus `pooled fake`.
-2. Hold out evaluation samples for each of the two generators.
-3. Measure each generator's critic-based distance to `real`.
-4. Interpret the smaller distance as indicating which generator is closer to the real distribution under the shared critic.
+1. Collect real samples from the target data distribution.
+2. Collect fake samples from generator A and generator B.
+3. Mix the two fake sets into one pooled fake distribution.
+4. Train one critic on `real` versus `fake_pool`.
+5. Keep separate withheld evaluation samples for generator A and generator B.
+6. Apply the same trained critic to each withheld fake set against the real set.
+7. Compare the resulting real-fake distances.
 
-## Why Pooled Fake Training Helps
+## Score Interpretation
 
-The main goal is not to make the critic identify which generator produced a sample. The goal is to reduce generator-specific specialization and encourage the critic to learn features associated with realness at the distribution level.
+The output of `w-critic` is a critic-based distance score for each generator in the pair.
 
-This is useful because:
+- a smaller distance indicates that the generator is closer to the real data distribution under the shared critic
+- a larger distance indicates that the generator is farther from the real data distribution under the shared critic
 
-- it creates a common reference for comparing the two generators in a pair
-- it reduces the risk of training one critic per generator and getting non-comparable scores
-- it encourages the critic to capture shared fake-versus-real discrepancies
+Because both generators are evaluated by the same critic, the two scores can be compared directly within the pair.
 
-That said, the wording here should stay careful: mixing fake samples from two generators does not prove that the critic cannot use generator-specific cues. If the two generators have distinctive artifacts, the critic may still rely on them indirectly. A better claim is that pairwise pooled training encourages the critic to focus on shared discrepancies, rather than guaranteeing complete invariance to generator identity.
+## Method Description
 
-## How To Interpret The Score
-
-The distance produced by `w-critic` should be interpreted as a critic-based proxy for relative distributional closeness to real data.
-
-Practically:
-
-- smaller distance means the generator's outputs are judged closer to the real distribution by the shared critic
-- larger distance means the outputs remain easier for the critic to separate from real samples
-
-This makes the metric especially useful for relative comparison between two generators evaluated under the same critic.
-
-## What This Metric Is Not
-
-`w-critic` should not be described too strongly as the true Wasserstein distance between the generator distribution and the real data distribution. In practice, the score depends on:
-
-- the capacity of the neural critic
-- the training procedure
-- the sampled data
-- the composition of the pooled fake set
-
-For that reason, the score is better viewed as a learned Wasserstein-style proxy, not an exact population distance.
-
-## Recommended Paper-Style Description
-
-You can describe the method like this:
-
-> For each pair of generators, we train a single critic against a pooled fake distribution formed by mixing samples from those two generators. This shared-critic design encourages the critic to model the discrepancy between fake and real samples at the distribution level, rather than specializing to either generator alone. At evaluation time, the same critic is applied separately to withheld samples from each generator in the pair, and the resulting real-fake distance serves as a relative measure of closeness to the real data distribution.
-
-Or, in a shorter form:
-
-> By training the critic on a pairwise mixed fake distribution, we encourage it to capture the shared discrepancy between fake and real samples, providing a unified evaluator for comparing two generators against the real distribution.
-
-## Limitations And Cautions
-
-When presenting results, it helps to acknowledge a few important caveats:
-
-- pooled training reduces but does not eliminate generator-specific bias
-- score magnitudes are critic-dependent and should be compared within the same evaluation setup
-- if one generator dominates the pairwise pooled fake distribution, the critic may become biased toward that generator's failure modes
-- critic scaling drift or unstable training can affect comparability
+For each pair of generators, `w-critic` trains a single critic on a pooled fake distribution formed by mixing samples from the two generators. The same critic is then applied separately to withheld samples from each generator to obtain a pairwise comparison against the real data distribution.
 
 ## Summary
 
-`w-critic` is best understood as a pairwise shared-critic evaluation framework:
+`w-critic` provides:
 
-- one critic
-- one pairwise pooled fake training distribution
-- one common realism standard for two generators at a time
+- one critic for one generator pair
+- one pooled fake training distribution
+- one shared evaluation reference for both generators
 
-Its value is in producing a more unified and interpretable relative comparison for a generator pair than training a separate critic for each generator.
+This setup supports direct pairwise comparison between two generators using the same critic.
